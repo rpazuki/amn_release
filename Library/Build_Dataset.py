@@ -606,14 +606,13 @@ class TrainingSet:
     def __init__(self,  cobraname='',
                  mediumname='', mediumbound='EB', mediumsize=-1,
                  objective=[], method='FBA',
-                 measure=[], verbose=False):
-
+                 measure=[], verbose=False):        
         if cobraname == '':
             return # create an empty object
         if not os.path.isfile(cobraname+'.xml'):
             print(cobraname)
             sys.exit('xml cobra file not found')
-        if not os.path.isfile(mediumname+'.csv'):
+        if not os.path.isfile(mediumname+'.csv'):            
             print(mediumname)
             sys.exit('medium or experimental file not found')
         self.cobraname = cobraname # model cobra file

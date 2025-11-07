@@ -1257,7 +1257,7 @@ class Neural_Model:
                  niter=0, xfold=5, # Cross valisation LOO does not work
                  es=False, # early stopping
                  verbose=False,
-                ):
+                ):        
         # Create empty object
         if model_type == '':
             return
@@ -1289,13 +1289,14 @@ class Neural_Model:
         # Get additional parameters (matrices)
         self.get_parameter(verbose=verbose)
         
-    def get_parameter(self, verbose=False):
+    def get_parameter(self, verbose=False):        
         # load parameter file if provided
         if self.trainingfile == None:
             return
         if not os.path.isfile(self.trainingfile+'.npz'):
             print(self.trainingfile+'.npz')
             sys.exit('parameter file not found')
+                    
         parameter = TrainingSet()
         parameter.load(self.trainingfile)
         if self.objective:

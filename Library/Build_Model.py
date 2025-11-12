@@ -1053,7 +1053,13 @@ def evaluate_model(model, x, y_true, parameter,
                 obj = 1 - np.sum(rss)
             print('LOO True, Pred, Q2 =', yt, yp, obj)
         else:
-            obj = r2_score(yt, yp, multioutput='variance_weighted')
+            # ADDED 2025-11-12 BY ROOZBEH H. PAZUKI
+            try:
+                obj = r2_score(yt, yp, multioutput='variance_weighted')
+            except Exception as e:
+                print("ERROR:")
+                print(f"R2 calculation failed: {e}")
+                obj = -1.0  # or np.nan to indicate failure                
     else:
         end = y_true.shape[1]
         obj = keras.metrics.binary_accuracy(y_true[:,:end],

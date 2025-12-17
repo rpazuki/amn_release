@@ -8,21 +8,14 @@
 from __future__ import print_function
 import os
 import sys
-import csv
-import random
 import math
 import numpy as np
 import pandas
-import time
-import json
-import copy
-import pickle
 import cobra
 # import cobra.test # was crashing the colab implementation
 import cobra.manipulation as manip
-from cobra import Reaction, Metabolite, Model
 from cobra.flux_analysis import pfba
-from sklearn.utils import shuffle
+# Removed: from sklearn.utils import shuffle  # Heavy import, replaced with numpy
 sys.setrecursionlimit(10000) # for row_echelon function
 
 import optlang
@@ -406,7 +399,7 @@ def reduce_model(model, medium, measure, flux, verbose=False):
 ###############################################################################
 
 def run_cobra(model, objective, IN, method='FBA', verbose=False,
-              objective_fraction=0.75, cobra_min_flux=1.0e-8):
+              objective_fraction=0.75, cobra_min_flux=1.0e-8, log_func=None):
     # Inputs:
     # - model
     # - objective: a list of reactions (first two only are considered)
@@ -442,7 +435,10 @@ def run_cobra(model, objective, IN, method='FBA', verbose=False,
     if method == 'pFBA' else model.optimize()
     solution_val = solution.fluxes[objective[0]]
     if verbose:
-        print('primal objectif =', objective, method, solution_val)
+        if log_func:
+            log_func(f'primal objectif = {objective} {method} {solution_val}')
+        else:
+            print('primal objectif =', objective, method, solution_val)
 
     # run FBA for second objective
     # primal objectif is set to a fraction of its value
@@ -456,7 +452,10 @@ def run_cobra(model, objective, IN, method='FBA', verbose=False,
         if method == 'pFBA' else model.optimize()
         solution_val = solution.fluxes[objective[1]]
         if verbose:
-            print('second objectif =', objective, method, solution_val)
+            if log_func:
+                log_func(f'second objectif = {objective} {method} {solution_val}')
+            else:
+                print('second objectif =', objective, method, solution_val)
 
         # reset bounds and objective to intial values
         obj.lower_bound, obj.upper_bound = obj_lb, obj_ub
@@ -482,7 +481,7 @@ def run_cobra(model, objective, IN, method='FBA', verbose=False,
 def create_random_medium_cobra(model, objective, 
                                medium, mediumbound, in_varmed, levmed, valmed, ratmed,
                                method='FBA', verbose=False,
-                               cobra_min_objective=1.0e-3):
+                               cobra_min_objective=1.0e-3, log_func=None):
     # Generate a random input and get Cobra's output
     # Input:
     # - model
@@ -509,7 +508,7 @@ def create_random_medium_cobra(model, objective,
     # X = actual number of variable medium turned ON
     L_in_varmed = len(in_varmed) 
     if L_in_varmed > 0:
-        X = len(in_varmed)        
+        X = len(in_varmed)
     else:
         X = sum(map(lambda x : x>1, levmed)) # total number of variable medium
         X = np.random.binomial(X, ratmed, 1)[0] if ratmed < 1 else int(ratmed)
@@ -532,7 +531,7 @@ def create_random_medium_cobra(model, objective,
         # create random medium choosing X fluxes in varmed at random
         INFLUX = {k: 0 for k in INFLUX.keys()} # reset
         model.medium = medini # reset
-        varmed = shuffle(varmed) # that's where random choice occur
+        np.random.shuffle(varmed) # that's where random choice occur
         for i in range(len(minmed)):
             j = minmed[i]
             k = medium[j]
@@ -540,16 +539,18 @@ def create_random_medium_cobra(model, objective,
         for i in range(X):
             j = varmed[i]
             k = medium[j]
-            # ROOZBEH: DO not know why we had +1 here
             v = (L_in_varmed+1) * np.random.randint(1,high=levmed[j]) * valmed[j]/(levmed[j]-1)
             INFLUX[k], model.medium[k] = v, v
-            
+
         # check with cobra
         try:
             _, obj = run_cobra(model, objective, INFLUX,
                                method=method, verbose=False)
         except:
-            print('Cobra cannot be run start again')
+            if log_func:
+                log_func('Cobra cannot be run start again')
+            else:
+                print('Cobra cannot be run start again')
             # treshold, iteration, up, valmed = \
             # init_constrained_objective(objective_value, in_treshold, 
             #                 modmed, valmed, verbose=verbose)
@@ -561,7 +562,10 @@ def create_random_medium_cobra(model, objective,
         # We have a solution
         if verbose:
             p = [ medium[varmed[i]] for i in range(X)]
-            print('pass (varmed, obj):', p, obj)
+            if log_func:
+                log_func(f'pass (varmed, obj): {p} {obj}')
+            else:
+                print('pass (varmed, obj):', p, obj)
         break
 
     model.medium = medini # reset medium
@@ -570,7 +574,7 @@ def create_random_medium_cobra(model, objective,
 
 def get_io_cobra(model, objective, 
                  medium, mediumbound, varmed, levmed, valmed, ratmed,
-                 E, method='FBA', inf={}, verbose=False):
+                 E, method='FBA', inf={}, verbose=False, log_func=None):
     # Generate a random input and get Cobra's output
     # Input:
     # - model: the cobra model
@@ -589,9 +593,8 @@ def get_io_cobra(model, objective,
         inf = create_random_medium_cobra(model, objective, 
                                          medium, mediumbound,
                                          varmed, levmed, valmed.copy(), ratmed,
-                                         method=method,verbose=verbose)   
-         
-    out,obj = run_cobra(model,objective,inf,method=method,verbose=verbose)
+                                         method=method,verbose=verbose, log_func=log_func)    
+    out,obj = run_cobra(model,objective,inf,method=method,verbose=verbose, log_func=log_func)
     Y = np.asarray(list(out.values()))
     X = np.asarray([ inf[medium[i]] for i in range(len(medium)) ])
 
@@ -794,16 +797,22 @@ class TrainingSet:
         if filename != '':
             sys.stdout.close()
 
-    def get(self, sample_size=100, varmed=[], reduce=False, verbose=False):
+    def get(self, sample_size=100, varmed=[], reduce=False, verbose=False, log_func=None):
         # Generate a training set for AMN
         # Input: sample size
         # objective_value and variable medium
         # (optional when experimental datafile)
+        # log_func: optional logging function (e.g., lambda msg: log_file.write(msg))
         # Output: X,Y (medium and reaction flux values)
 
         X, Y, inf = {}, {}, {}
         for i in range(sample_size):
-            if verbose: print('sample:',i)
+            if verbose:
+                msg = f'sample: {i}'
+                if log_func:
+                    log_func(msg)
+                else:
+                    print(msg)
 
             # Cobra is run on reduce model where X is already know
             if reduce:
@@ -816,7 +825,8 @@ class TrainingSet:
                          self.medium, self.mediumbound, varmed,
                          self.levmed, self.valmed, self.ratmed,
                          self.Pout, inf=inf, method=self.method,
-                         verbose=verbose)
+                         verbose=verbose,
+                         log_func=log_func)
         X = np.asarray(list(X.values()))
         Y = np.asarray(list(Y.values()))
 
@@ -850,7 +860,7 @@ class TrainingSet:
         
         self.measure = measure if len(self.measure) > 0 else self.measure
         _, _, self.Pout, _, _ = \
-        get_matrices(self.model, self.medium, self.measure, self.model.reactions)        
+        get_matrices(self.model, self.medium, self.measure, self.model.reactions)
         self.Yall = self.Y.copy()
         if self.measure != []:
             # Y = only the reaction fluxes that are in Vout

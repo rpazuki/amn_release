@@ -310,12 +310,16 @@ def input_AMN(parameter, verbose=False):
         # we add b_int and b_ext
         x = parameter.b_int 
         x = np.vstack([x]*X.shape[0]) if len(x.shape) == 1 else x
+        if verbose: print("b_int.shape: ", x.shape)
         b_int = np.copy(x)
         X = np.concatenate((X, x), axis=1)
+        if verbose: print("concatenated X and b_int shape:", X.shape)
         x = parameter.b_ext 
         x = np.vstack([x]*X.shape[0]) if len(x.shape) == 1 else x
+        if verbose: print("b_ext.shape: ", x.shape)
         b_ext = np.copy(x)
         X = np.concatenate((X, x), axis=1)  
+        if verbose: print("concatenated X and b_ext shape:", X.shape)
         if parameter.mediumbound == 'UB' or "MM" in parameter.model_type:
             # print("NOT switching b_int and b_ext")
             parameter.b_int, parameter.b_ext = b_int, b_ext

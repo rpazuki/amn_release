@@ -13,3 +13,5 @@ old/
 biolog_simulations.npy
 Reservoir/IJN*.h5
 .env
+**/logs/
+amn.egg-info/

@@ -28,10 +28,10 @@ def create_random_medium_from_cobra(expname: str):
     mediumbound = 'UB'
     exp_df_name = 'df_amn_dataset'
     method = 'pFBA'
-    size_i = 100
-    reduce = True
+    size_i = 2000
+    reduce = False
     verbose = True
-    DIRECTORY = './'
+    DIRECTORY = '../../'
     
     # Setup logging
     log_dir = './logs'
@@ -119,6 +119,7 @@ def main():
     # Get list of experiments
     exp_dir = 'H:/ROBOT_SCIENTIST/E_coli/Growth_rates/2025-10-31-27/processed/no_replicates'
     expnames = os.listdir(exp_dir)
+    expnames = [name for name in expnames if os.path.isdir(os.path.join(exp_dir, name))]
 
     print(f"Starting parallel processing of {len(expnames)} experiments with {PARALLEL_LEVEL} workers")
     print(f"Log files will be created in {os.path.abspath(log_dir)}/ directory")

@@ -28,7 +28,8 @@ def create_random_medium_from_cobra(strain_name: str):
     mediumbound = 'UB'
     exp_df_name = 'df_AMN_input'
     method = 'pFBA'
-    size_i = 2000
+    size_i = 1
+    test_ratio = 0.2
     reduce = False
     verbose = True
     DIRECTORY = '../../'
@@ -65,7 +66,6 @@ def create_random_medium_from_cobra(strain_name: str):
                                 method='EXP', verbose=False)
         X = parameter.X.copy()
         log(f"X shape: {X.shape}")        
-
         # Get other parameters from medium file
         mediumfile = exp_data_path + mediumname
         log(f"Reading medium file from {mediumfile}")
@@ -73,7 +73,6 @@ def create_random_medium_from_cobra(strain_name: str):
                                 mediumname=mediumfile, 
                                 mediumbound=mediumbound, 
                                 method=method, verbose=False)
-
         # Create varmed list
         log("Creating variable medium list")
         varmed = {}
@@ -93,14 +92,19 @@ def create_random_medium_from_cobra(strain_name: str):
             log(f"varmed[{i}]: {varmed[i]}")
             parameter.get(sample_size=size_i, varmed=varmed[i], verbose=verbose, log_func=log) 
             log(f"Sample {i+1}/{X.shape[0]} completed")
-
         # Saving file
-        trainingfile = DIRECTORY + 'Dataset_model/' + strain_name + '_' + parameter.mediumbound
+        trainingfile = DIRECTORY + 'Dataset_model/' + strain_name + '_' + parameter.mediumbound + '_' + str(size_i)
         log(f"Saving training file to {trainingfile}")
-        parameter.save(trainingfile, reduce=reduce)
+        log("Step 1/3: Updating stoichiometric matrices...")
+        parameter.update_matrices(verbose=False, log_func=log)
+        log("Step 2/3: Updating LP matrices (this may take several minutes for large datasets)...")
+        parameter.update_matrices_LP(verbose=False, log_func=log)
+        log("Step 3/3: Writing files to disk...")
+        parameter.save(trainingfile, reduce=reduce, log_func=log)
         log(f"Successfully completed processing for {strain_name}")
         
         log_f.close()
+        log(f"Y : {parameter.Y}   ")
         return f"{strain_name}: SUCCESS"
         
     except Exception as e:

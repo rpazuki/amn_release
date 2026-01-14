@@ -24,11 +24,11 @@ def create_random_medium_from_cobra(expname: str):
     
     # Parameters
     cobraname = 'iML1515_duplicated_Lab_Data'
-    mediumname = 'df_amn_dataset_levels'
+    mediumname = 'df_AMN_level'
     mediumbound = 'UB'
-    exp_df_name = 'df_amn_dataset'
+    exp_df_name = 'df_AMN_input'
     method = 'pFBA'
-    size_i = 2000
+    size_i = 1
     reduce = False
     verbose = True
     DIRECTORY = '../../'
@@ -94,7 +94,7 @@ def create_random_medium_from_cobra(expname: str):
             log(f"Sample {i+1}/{X.shape[0]} completed")
 
         # Saving file
-        trainingfile = DIRECTORY + 'Dataset_model/' + expname + '_' + parameter.mediumbound
+        trainingfile = DIRECTORY + 'Dataset_model/' + expname + '_' + parameter.mediumbound + '_' + str(size_i)
         log(f"Saving training file to {trainingfile}")
         parameter.save(trainingfile, reduce=reduce)
         log(f"Successfully completed processing for {expname}")

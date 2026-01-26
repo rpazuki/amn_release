@@ -758,7 +758,12 @@ class TrainingSet:
         self.Sb = loaded['Sb']
         self.c = loaded['c']
         self.allmatrices = True
-        self.model = cobra.io.read_sbml_model(self.cobraname+'.xml')
+        # self.model = cobra.io.read_sbml_model(self.cobraname+'.xml')
+        from pathlib import Path        
+        model_path = Path(self.cobraname + '.xml').absolute()
+        print(f"Loading model from: {str(model_path)}: {model_path.is_file()}" )
+        self.model = cobra.io.read_sbml_model(str(model_path))
+        
 
     def printout(self,filename=''):
         if filename != '':

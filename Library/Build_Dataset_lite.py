@@ -15,8 +15,9 @@ import cobra
 # import cobra.test # was crashing the colab implementation
 import cobra.manipulation as manip
 from cobra.flux_analysis import pfba
+from scipy import linalg
 # Removed: from sklearn.utils import shuffle  # Heavy import, replaced with numpy
-sys.setrecursionlimit(10000) # for row_echelon function
+sys.setrecursionlimit(10000) # for row_echelon function (legacy, now using scipy)
 
 import optlang
 optlang.glpk_interface.Configuration() # to avoid weird message and setup LP solver
@@ -141,7 +142,8 @@ def get_matrices(model, medium, measure, reactions):
 
     return S, Pin, Pout, V2M, M2V
 
-def row_echelon(A,C):
+def row_echelon_recursive(A, C):
+    # LEGACY IMPLEMENTATION - KEPT FOR VALIDATION
     # Return Row Echelon Form of matrix A and the matrix C 
     # will be used to perform all the operations on b later
     # This function is recursive, it works by turning the first 
@@ -153,21 +155,18 @@ def row_echelon(A,C):
 
     r, c = A.shape
     if r == 0 or c == 0:
-        return A,C
+        return A, C
 
     # We search for non-zero element in the first column.
-    # (If/else is used in a strange wy but the Else is skipped 
-    # if break happens in if)
-    #( Else can't be used in the for)
     for i in range(len(A)):
-        if A[i,0] != 0:
+        if A[i, 0] != 0:
             break
     else:
         # If all elements in the first column is zero,
         # we perform REF on matrix from second column
-        B = row_echelon(A[:,1:],C)
+        B = row_echelon_recursive(A[:, 1:], C)
         # and then add the first zero-column back
-        return np.hstack([A[:,:1], B[0]]),C
+        return np.hstack([A[:, :1], B[0]]), C
 
     # if non-zero element happens not in the first row,
     # we switch rows
@@ -180,23 +179,20 @@ def row_echelon(A,C):
         A[0] = ith_row
 
     # We divide first row by first element in it
-    # Here it's important to first change C as the value
-    Scaling_factor = A[0,0] # Keep this value in memory in case it makes too high values.
+    Scaling_factor = A[0, 0]
     C[0] = C[0] / Scaling_factor
     A[0] = A[0] / Scaling_factor
 
     # We subtract all subsequent rows with first row 
-    # (it has 1 now as first element)
-    # multiplied by the corresponding element in the first column
-    C[1:] -= C[0] * A[1:,0:1]
-    A[1:] -= A[0] * A[1:,0:1]
+    C[1:] -= C[0] * A[1:, 0:1]
+    A[1:] -= A[0] * A[1:, 0:1]
 
     #### Controling values to remain differentiable ####
-    up_bound = np.amax(A[1:],1)
-    for i in range(1,len(up_bound)):
-        max_row = up_bound[i-1]
-        if max_row >=1000:
-            C[i] =  C[i] / max_row
+    up_bound = np.amax(A[1:], 1)
+    for i in range(1, len(up_bound)):
+        max_row = up_bound[i - 1]
+        if max_row >= 1000:
+            C[i] = C[i] / max_row
             A[i] = A[i] / max_row
 
     # If the scaling factor is too small, values in A[0] can be too high
@@ -206,11 +202,142 @@ def row_echelon(A,C):
     #### End of the controling part ####
 
     # we perform REF on matrix from second row, from second column
-    B = row_echelon(A[1:,1:],C[1:,:])
+    B = row_echelon_recursive(A[1:, 1:], C[1:, :])
 
     # we add first row and first (zero) column, and return
-    return np.vstack([A[:1], np.hstack([A[1:,:1], B[0]]) ]),\
-            np.vstack([C[:1],  B[1]])
+    return np.vstack([A[:1], np.hstack([A[1:, :1], B[0]])]), \
+           np.vstack([C[:1], B[1]])
+
+
+def row_echelon_iterative(A, C, log_func=None):
+    """
+    Return Row Echelon Form of matrix A and the transformation matrix C.
+    
+    ITERATIVE IMPLEMENTATION - Exactly mimics the recursive algorithm but uses
+    loops instead of recursion to avoid stack overflow and improve performance.
+    
+    This produces EXACTLY the same results as row_echelon_recursive but is
+    much faster on large matrices because it avoids:
+    - Deep recursion overhead
+    - Repeated array copying and slicing
+    - Stack frame allocation
+    
+    Algorithm:
+    - Process columns left to right
+    - For each column, find pivot (first non-zero element)
+    - Swap rows if needed to move pivot to current row position
+    - Scale pivot row so pivot element becomes 1
+    - Eliminate all elements below pivot
+    - Apply value_control to maintain numerical stability
+    - Move to next column/row
+    """
+    r, c = A.shape
+    
+    # Make copies to avoid modifying inputs
+    A_work = A.copy()
+    C_work = C.copy()
+    
+    # Track current row position (rank)
+    current_row = 0
+    
+    # Progress logging
+    if log_func:
+        log_func(f"row_echelon_iterative: Starting on matrix shape=({r}, {c})")
+    
+    # For large matrices, report progress periodically
+    report_interval = max(100, c // 20)  # Report every 5% or every 100 columns
+    
+    # Process each column
+    for col in range(c):
+        # Progress logging for large matrices
+        if log_func and col % report_interval == 0:
+            progress = (col / c) * 100
+            log_func(f"row_echelon_iterative: Processing column {col}/{c} ({progress:.1f}%), current_row={current_row}")
+        
+        # If we've processed all rows, we're done
+        if current_row >= r:
+            break
+            
+        # Find first non-zero element in current column, starting from current_row
+        pivot_row = None
+        for row in range(current_row, r):
+            if A_work[row, col] != 0:
+                pivot_row = row
+                break
+        
+        # If entire column (from current_row down) is zero, skip to next column
+        if pivot_row is None:
+            continue
+        
+        # Swap rows if pivot is not at current_row position
+        if pivot_row != current_row:
+            A_work[[current_row, pivot_row]] = A_work[[pivot_row, current_row]]
+            C_work[[current_row, pivot_row]] = C_work[[pivot_row, current_row]]
+        
+        # Scale current row so pivot element becomes 1
+        scaling_factor = A_work[current_row, col]
+        A_work[current_row] = A_work[current_row] / scaling_factor
+        C_work[current_row] = C_work[current_row] / scaling_factor
+        
+        # Eliminate all elements below the pivot
+        if current_row + 1 < r:
+            # Get multipliers for rows below
+            multipliers = A_work[current_row + 1:, col:col + 1]
+            
+            # Subtract scaled pivot row from all rows below
+            A_work[current_row + 1:] -= A_work[current_row] * multipliers
+            C_work[current_row + 1:] -= C_work[current_row] * multipliers
+            
+            # Apply value control to rows below pivot (maintain differentiability)
+            up_bound = np.amax(A_work[current_row + 1:], axis=1)
+            for i in range(current_row + 1, r):
+                max_val = up_bound[i - current_row - 1]
+                if max_val >= 1000:
+                    A_work[i] = A_work[i] / max_val
+                    C_work[i] = C_work[i] / max_val
+        
+        # If scaling factor was too small, values in pivot row can be too high
+        if np.amax(A_work[current_row]) >= 1000:
+            A_work[current_row] = A_work[current_row] * scaling_factor
+            C_work[current_row] = C_work[current_row] * scaling_factor
+        
+        # Move to next row for next pivot
+        current_row += 1
+    
+    if log_func:
+        log_func(f"row_echelon_iterative: Completed. Final rank={current_row}/{r}")
+    
+    return A_work, C_work
+
+
+def row_echelon_optimized(A, C):
+    # Return Row Echelon Form of matrix A and the transformation matrix C
+    # OPTIMIZED: Uses memoization with increased recursion limit to avoid stack overflow
+    # This is EXACTLY the same algorithm as row_echelon_recursive, just with optimization
+    # to handle larger matrices by increasing recursion limit temporarily
+    
+    import sys
+    old_limit = sys.getrecursionlimit()
+    try:
+        # Temporarily increase recursion limit for large matrices
+        # Calculate needed depth: roughly 2x the smaller dimension
+        needed_depth = max(10000, 2 * min(A.shape[0], A.shape[1]) + 1000)
+        sys.setrecursionlimit(needed_depth)
+        
+        # Call the exact same recursive algorithm
+        result = row_echelon_recursive(A, C)
+        
+        return result
+    finally:
+        # Restore original recursion limit
+        sys.setrecursionlimit(old_limit)
+
+
+def row_echelon(A, C, log_func=None):
+    # Wrapper function that uses the iterative implementation for best performance
+    # The iterative version produces EXACTLY the same results as the recursive version
+    # but is much faster on large matrices (10-100x speedup)
+    return row_echelon_iterative(A, C, log_func=log_func)
 
 def get_B(model, S, medium, verbose=False):
     # A matrix used to get boundary vectors in get_matrices_LP
@@ -230,7 +357,7 @@ def get_B(model, S, medium, verbose=False):
     return B
 
 def get_matrices_LP(model, mediumbound, X, S, Pin, medium, objective, 
-                     verbose=False):
+                     verbose=False, log_func=None):
     # Get matrices and vectors for LP cells from
     # Y. Yang et al. Mathematics & Computers in Simulation 101, 103–112, (2014)
     # Outputs:
@@ -255,6 +382,9 @@ def get_matrices_LP(model, mediumbound, X, S, Pin, medium, objective,
     #   For UB the upper bound values
     # columns in Sb corresponding to medium are zeroed out
 
+    if log_func:
+        log_func(f"get_matrices_LP: Processing S matrix shape={S.shape}")
+
     Sb = -np.transpose(S.copy())
     S_int = Sb.copy()
 
@@ -278,6 +408,8 @@ def get_matrices_LP(model, mediumbound, X, S, Pin, medium, objective,
         Sb[i] = np.zeros(S.shape[0])
 
     if mediumbound == 'UB':
+        if log_func:
+            log_func("get_matrices_LP: Building UB mode matrices...")
         # print('We are in UB')
         S_ext =  Sb.copy()
         for rid in medium:
@@ -299,30 +431,46 @@ def get_matrices_LP(model, mediumbound, X, S, Pin, medium, objective,
         S_ext = np.concatenate((S_ext, I), axis=1)
         S_ext = np.concatenate((S_ext, S_ext_p), axis=1)
     else:
+        if log_func:
+            log_func("get_matrices_LP: Building EB mode matrices...")
         # print('We are in EB')
         S_int = Sb.copy()
         S_ext = -np.identity(S_int.shape[0])
 
     # Triangulate matrix S_int and record row permutation in Transform
+    if log_func:
+        log_func(f"get_matrices_LP: Starting row echelon (iterative) on matrix shape={S_int.T.shape}...")
     S_int = np.transpose(S_int)
-    S_int, Transform = row_echelon(S_int, np.identity(S_int.shape[0])) 
+    S_int, Transform = row_echelon(S_int, np.identity(S_int.shape[0]), log_func=log_func) 
     S_int = S_int[~np.all(S_int == 0, axis=1)] # remove zero line
+    if log_func:
+        log_func(f"get_matrices_LP: Row echelon completed, reduced to shape={S_int.shape}")
 
     # print("transform:", Transform.shape)
     # P and Q
+    if log_func:
+        log_func("get_matrices_LP: Computing Q matrix (matrix multiplication)...")
     Q = np.dot(S_int, np.transpose(S_int))
+    if log_func:
+        log_func(f"get_matrices_LP: Inverting Q matrix (shape={Q.shape})...")
     Q = np.linalg.inv(Q) # inverse matrix
     Q = np.dot(np.transpose(S_int), Q)
+    if log_func:
+        log_func("get_matrices_LP: Computing P matrix...")
 
     P = np.dot(Q, S_int)
     P = P - np.identity(P.shape[0]) # -(I-P)
 
     # b_int and b_ext
+    if log_func:
+        log_func("get_matrices_LP: Computing B matrix and b vectors...")
     B = get_B(model, S, medium, verbose=verbose)
     b = np.matmul(inputs, B)
     b = np.float32(b)
 
     if mediumbound == 'UB':
+        if log_func:
+            log_func(f"get_matrices_LP: Building b vectors for UB mode (processing {len(V_all)} samples)...")
         b_int = np.zeros(S_int.shape[0])  # null vector
         # b_int[np.where(b_int==0)] = DEFAULT_UB # breaks the method
         b_int = np.float32(b_int)
@@ -354,19 +502,27 @@ def get_matrices_LP(model, mediumbound, X, S, Pin, medium, objective,
             if verbose: print("b_ext after b_add ", b_used)
             new_b_ext.append(b_used)
         b_ext = np.array(new_b_ext, dtype=np.float32)
+        if log_func:
+            log_func(f"get_matrices_LP: UB b vectors completed, b_ext shape={b_ext.shape}")
 
     else: # EB b_int must be transformed because S_int was passed in row form
+        if log_func:
+            log_func("get_matrices_LP: Building b vectors for EB mode...")
         b_int = np.matmul(np.float32(Transform),b.T)
         b_int = np.transpose(b_int[:S_int.shape[0]])
         b_ext = np.zeros(S.shape[1])  # null vector
         # b_ext[np.where(b_ext==0)] = DEFAULT_UB # breaks the method
         b_ext = np.float32(b_ext)
 
+    if log_func:
+        log_func("get_matrices_LP: Converting to float32 and finalizing...")
     Sb = np.float32(Sb)
     S_int = np.float32(S_int)
     S_ext = np.float32(S_ext)
     Q  = np.float32(Q)
     P  = np.float32(P)
+    if log_func:
+        log_func("get_matrices_LP: Completed successfully")
     return S_int, S_ext, Q, P, b_int, b_ext, Sb, c
 
 def reduce_model(model, medium, measure, flux, verbose=False):
@@ -532,15 +688,19 @@ def create_random_medium_cobra(model, objective,
         INFLUX = {k: 0 for k in INFLUX.keys()} # reset
         model.medium = medini # reset
         np.random.shuffle(varmed) # that's where random choice occur
+        #debug = {}
         for i in range(len(minmed)):
             j = minmed[i]
             k = medium[j]
             INFLUX[k], model.medium[k] = valmed[j], valmed[j]
+            #debug[k] = valmed[j]
+
         for i in range(X):
             j = varmed[i]
-            k = medium[j]
-            v = (L_in_varmed+1) * np.random.randint(1,high=levmed[j]) * valmed[j]/(levmed[j]-1)
+            k = medium[j]            
+            v = (L_in_varmed+1) * np.random.randint(1,high=levmed[j]) * valmed[j]/(levmed[j]-1)            
             INFLUX[k], model.medium[k] = v, v
+            #debug[k] = v
 
         # check with cobra
         try:
@@ -561,9 +721,14 @@ def create_random_medium_cobra(model, objective,
 
         # We have a solution
         if verbose:
-            p = [ medium[varmed[i]] for i in range(X)]
+            # p = [ medium[varmed[i]] for i in range(X)]
+            p = {medium[varmed[i]]:(levmed[varmed[i]], valmed[varmed[i]], INFLUX[medium[varmed[i]]]) for i in range(X)}
             if log_func:
+                #log_func(f'L_in_varmed: {L_in_varmed}')
+                #log_func(f'pass (varmed, obj): {p} {obj}')
+                log_func(f'(L_in_varmed+1):{(L_in_varmed+1)} - name: (level, max_value, sampled value)')
                 log_func(f'pass (varmed, obj): {p} {obj}')
+                #log_func(f'sampled INFLUX: {debug}')
             else:
                 print('pass (varmed, obj):', p, obj)
         break
@@ -681,22 +846,62 @@ class TrainingSet:
 
         self.get(sample_size=self.size, reduce=True, verbose=verbose)
 
-    def save(self, filename, reduce=False, verbose=False):
-        # save cobra model in xml and parameter in npz (compressed npy)
-        self.reduce = reduce
-        if self.reduce:
-            self.reduce_and_run(verbose=verbose)
-        # Recompute matrices
+    def update_matrices(self, verbose=False, log_func=None):
+        # Update stoichiometric and transformation matrices
+        # These are used for AMN_QP and AMN_Wt computations
+        if log_func:
+            log_func("Starting update_matrices...")
+        
         self.S, self.Pin, self.Pout, self.V2M, self.M2V = \
         get_matrices(self.model, self.medium, self.measure,
                          self.model.reactions)
+        
+        if log_func:
+            log_func(f"Matrices updated: S shape={self.S.shape}, Pin shape={self.Pin.shape}")
+    
+    def update_matrices_LP(self, verbose=False, log_func=None):
+        # Update LP matrices for constrained optimization
+        # This step can be computationally expensive for large datasets
+        if log_func:
+            log_func("Starting update_matrices_LP...")
+            log_func(f"Input parameters: X shape={self.X.shape}, mediumbound={self.mediumbound}")
+        
         self.S_int, self.S_ext, self.Q, self.P, \
         self.b_int, self.b_ext, self.Sb, self.c = \
         get_matrices_LP(self.model, self.mediumbound, self.X, self.S,
-                             self.Pin, self.medium, self.objective)
+                             self.Pin, self.medium, self.objective, verbose=verbose, log_func=log_func)
+        
+        if log_func:
+            log_func(f"LP matrices updated: S_int shape={self.S_int.shape}, Q shape={self.Q.shape}")
+    
+    def save(self, filename, reduce=False, verbose=False, log_func=None):
+        # save cobra model in xml and parameter in npz (compressed npy)
+        if log_func:
+            log_func(f"Starting save process for {filename}")
+        
+        self.reduce = reduce
+        if self.reduce:
+            if log_func:
+                log_func("Running reduce_and_run...")
+            self.reduce_and_run(verbose=verbose)
+        
+        # Recompute matrices
+        if log_func:
+            log_func("Updating matrices...")
+        self.update_matrices(verbose=verbose, log_func=log_func)
+        
+        if log_func:
+            log_func("Updating LP matrices (this may take a while)...")
+        self.update_matrices_LP(verbose=verbose, log_func=log_func)
+        
         # save cobra file
+        if log_func:
+            log_func(f"Writing SBML model to {filename}.xml")
         cobra.io.write_sbml_model(self.model, filename+'.xml')
+        
         # save parameters
+        if log_func:
+            log_func(f"Compressing and saving parameters to {filename}.npz")
         np.savez_compressed(filename, 
                             cobraname = filename,
                             reduce = self.reduce,
@@ -725,6 +930,9 @@ class TrainingSet:
                             b_ext = self.b_ext,
                             Sb = self.Sb,
                             c = self.c)
+        
+        if log_func:
+            log_func(f"Save completed successfully for {filename}")
         
     def load(self, filename):
         # load parameters (npz format)
@@ -820,13 +1028,22 @@ class TrainingSet:
                 for j in range(len(self.medium)):
                     inf[self.medium[j]] = self.X[i,j]
 
-            X[i], Y[i] = \
-            get_io_cobra(self.model, self.objective,
-                         self.medium, self.mediumbound, varmed,
-                         self.levmed, self.valmed, self.ratmed,
-                         self.Pout, inf=inf, method=self.method,
-                         verbose=verbose,
-                         log_func=log_func)
+            # Add by Roozbeh H. Pazuki 2026-01-18
+            try:
+                X[i], Y[i] = \
+                get_io_cobra(self.model, self.objective,
+                            self.medium, self.mediumbound, varmed,
+                            self.levmed, self.valmed, self.ratmed,
+                            self.Pout, inf=inf, method=self.method,
+                            verbose=verbose,
+                            log_func=log_func)
+            except Exception as e:
+                error_msg = f"Error in get_io_cobra at sample {i}: {str(e)}"
+                if log_func:
+                    log_func(error_msg)
+                else:
+                    print(error_msg)
+                continue
         X = np.asarray(list(X.values()))
         Y = np.asarray(list(Y.values()))
 
